@@ -150,12 +150,14 @@ function Core:set_default()
   if not current then
     return
   end
-  if current ~= self.opts.default_layout then
-    self.state.prev_layout = current
-    local ok, err = self:set_layout(self.opts.default_layout)
-    if not ok and err then
-      vim.notify(("lang_autoswitch: failed to set default layout: %s"):format(err), vim.log.levels.WARN)
-    end
+  if current == self.opts.default_layout then
+    self.state.prev_layout = nil
+    return
+  end
+  self.state.prev_layout = current
+  local ok, err = self:set_layout(self.opts.default_layout)
+  if not ok and err then
+    vim.notify(("lang_autoswitch: failed to set default layout: %s"):format(err), vim.log.levels.WARN)
   end
 end
 
@@ -163,11 +165,15 @@ function Core:restore_prev()
   if self:should_debounce("restore_prev") then
     return
   end
-  if self.state.prev_layout and self.state.prev_layout ~= self.opts.default_layout then
-    local ok, err = self:set_layout(self.state.prev_layout)
-    if not ok and err then
-      vim.notify(("lang_autoswitch: failed to restore layout: %s"):format(err), vim.log.levels.WARN)
-    end
+  local prev = self.state.prev_layout
+  if not prev or prev == self.opts.default_layout then
+    self.state.prev_layout = nil
+    return
+  end
+  local ok, err = self:set_layout(prev)
+  self.state.prev_layout = nil
+  if not ok and err then
+    vim.notify(("lang_autoswitch: failed to restore layout: %s"):format(err), vim.log.levels.WARN)
   end
 end
 
