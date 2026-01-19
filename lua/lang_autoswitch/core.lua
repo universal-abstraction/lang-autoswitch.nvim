@@ -91,7 +91,7 @@ function Core:should_debounce(key)
 end
 
 function Core:get_current_layout()
-  local kbs = self.backend.get_keyboards(self.opts)
+  local kbs = self.backend.get_keyboards(self.opts, true)
   local kb = self.backend.pick_keyboard(kbs, self.opts.device)
   if not kb then
     return nil, nil, "No keyboard found in backend output"

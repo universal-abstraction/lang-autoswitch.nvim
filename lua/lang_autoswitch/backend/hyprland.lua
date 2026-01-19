@@ -23,9 +23,9 @@ local function run(cmd)
   return result.stdout, nil
 end
 
-function M.get_keyboards(opts)
+function M.get_keyboards(opts, fresh)
   local ttl = tonumber(opts.cache_ttl_ms) or 0
-  if ttl > 0 and state.cache.kbs then
+  if not fresh and ttl > 0 and state.cache.kbs then
     local age = now_ms() - (state.cache.at or 0)
     if age <= ttl then
       return state.cache.kbs
