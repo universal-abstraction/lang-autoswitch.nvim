@@ -83,6 +83,8 @@ NOTES                                                             *lang-autoswit
 
 - If Focus events do not fire in a terminal, ensure `focus-events` are enabled
   in tmux.
+- The plugin only restores a layout if it actually switched to the default
+  layout earlier; otherwise it does nothing.
 
 
 CHANGELOG                                                        *lang-autoswitch-changelog*

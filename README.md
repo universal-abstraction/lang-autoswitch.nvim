@@ -11,7 +11,7 @@ Small Neovim plugin to auto-switch XKB layouts via pluggable backends.
 ## Usage (Default Behavior)
 - On startup (`VimEnter`), the default layout is enforced.
 - While focused in Normal mode, the default layout is enforced.
-- When entering Insert or losing focus, the previous layout is restored.
+- When entering Insert or losing focus, the previous layout (captured only if a switch occurred) is restored.
 
 ## Requirements
 - Neovim 0.10+ (uses `vim.system`).
