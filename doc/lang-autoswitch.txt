@@ -1,0 +1,92 @@
+*lang-autoswitch.nvim*   Simple XKB layout autoswitch for Hyprland
+
+INTRODUCTION                                                     *lang-autoswitch*
+
+lang-autoswitch.nvim is a small Neovim plugin that switches XKB layouts using
+Hyprland's hyprctl. It sets a default layout on FocusGained/InsertLeave and
+restores the previous layout on FocusLost/InsertEnter.
+
+
+REQUIREMENTS                                                     *lang-autoswitch-requirements*
+
+- Neovim 0.10+ (uses |vim.system|)
+- Hyprland with `hyprctl` available in PATH
+
+
+SETUP                                                            *lang-autoswitch-setup*
+
+Example (lazy.nvim):
+>
+  {
+    "your-user/lang-autoswitch.nvim",
+    event = { "InsertEnter", "FocusGained" },
+    opts = {
+      default_layout = "us",
+      restore_on_insert = true,
+      set_on_focus_gained = true,
+      restore_on_focus_lost = true,
+      device = "at-translated-set-2-keyboard",
+      layouts = { "us", "ru" },
+      keymap_map = { ["English (US)"] = "us" },
+      keymap_regex_map = { { pattern = "Russian", layout = "ru" } },
+      cache_ttl_ms = 1000,
+      debounce_ms = 75,
+    },
+  }
+<
+
+OPTIONS                                                          *lang-autoswitch-options*
+
+default_layout (string)
+  Layout to enforce in normal mode. Default: "us".
+
+restore_on_insert (boolean)
+  Restore previous layout on InsertEnter. Default: true.
+
+set_on_focus_gained (boolean)
+  Enforce default layout on FocusGained. Default: true.
+
+restore_on_focus_lost (boolean)
+  Restore previous layout on FocusLost. Default: true.
+
+set_on_vimenter (boolean)
+  Enforce default layout on VimEnter. Default: true.
+
+set_on_insertleave (boolean)
+  Enforce default layout on InsertLeave. Default: true.
+
+device (string|nil)
+  Keyboard name from `hyprctl devices -j`. When nil, the main keyboard is used.
+
+layouts (table|nil)
+  Explicit layouts list, e.g. { "us", "ru" }. Use when auto-detection fails.
+
+keymap_map (table|nil)
+  Map of `active_keymap` strings to layout codes, e.g. { ["English (US)"] = "us" }.
+
+keymap_regex_map (table|nil)
+  List of { pattern = "English", layout = "us" } using Lua patterns.
+
+cache_ttl_ms (number)
+  Cache `hyprctl devices -j` for this many milliseconds. Default: 1000.
+
+debounce_ms (number)
+  Debounce layout switching calls. Default: 75.
+
+COMMANDS                                                         *lang-autoswitch-commands*
+
+:LangAutoswitchSelfCheck
+  Run a small environment check (hyprctl availability and layout detection).
+
+
+NOTES                                                             *lang-autoswitch-notes*
+
+- If Focus events do not fire in a terminal, ensure `focus-events` are enabled
+  in tmux.
+
+
+CHANGELOG                                                        *lang-autoswitch-changelog*
+
+See CHANGELOG.md in the repository.
+
+vim:tw=78:ts=8:ft=help:norl:
