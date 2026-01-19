@@ -8,6 +8,11 @@ Small Neovim plugin to auto-switch XKB layouts via pluggable backends.
 - Optional device/layout overrides.
 - Backend architecture (currently Hyprland only).
 
+## Usage (Default Behavior)
+- On startup (`VimEnter`), the default layout is enforced.
+- While focused in Normal mode, the default layout is enforced.
+- When entering Insert or losing focus, the previous layout is restored.
+
 ## Requirements
 - Neovim 0.10+ (uses `vim.system`).
 - Hyprland with `hyprctl` in PATH (only supported backend for now).
