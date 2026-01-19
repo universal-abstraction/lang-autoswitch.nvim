@@ -146,9 +146,6 @@ function Core:set_default()
   if self:should_debounce("set_default") then
     return
   end
-  if self.state.last_known_layout == self.opts.default_layout then
-    return
-  end
   local current = self:get_current_layout()
   if not current then
     return
