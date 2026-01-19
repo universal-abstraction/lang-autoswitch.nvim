@@ -10,6 +10,7 @@ local defaults = {
   restore_on_focus_lost = true,
   set_on_vimenter = true,
   set_on_insertleave = true,
+  restore_only_if_default = true,
   device = nil,   -- optional keyboard name from `hyprctl devices -j`
   layouts = nil,  -- optional list like { "us", "ru" } if auto-detection fails
   keymap_map = nil, -- optional map of active_keymap -> layout code

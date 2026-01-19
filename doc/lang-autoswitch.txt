@@ -55,6 +55,9 @@ set_on_vimenter (boolean)
 set_on_insertleave (boolean)
   Enforce default layout on InsertLeave. Default: true.
 
+restore_only_if_default (boolean)
+  Only restore when current layout is the default. Default: true.
+
 device (string|nil)
   Keyboard name from `hyprctl devices -j`. When nil, the main keyboard is used.
 

@@ -146,6 +146,10 @@ function Core:set_default()
   if self:should_debounce("set_default") then
     return
   end
+  if not self.opts.default_layout or self.opts.default_layout == "" then
+    self.state.prev_layout = nil
+    return
+  end
   local current = self:get_current_layout()
   if not current then
     return
@@ -164,6 +168,13 @@ end
 function Core:restore_prev()
   if self:should_debounce("restore_prev") then
     return
+  end
+  if self.opts.restore_only_if_default and self.opts.default_layout and self.opts.default_layout ~= "" then
+    local current = self:get_current_layout()
+    if current and current ~= self.opts.default_layout then
+      self.state.prev_layout = nil
+      return
+    end
   end
   local prev = self.state.prev_layout
   if not prev or prev == self.opts.default_layout then

@@ -55,6 +55,7 @@ Optional configuration:
 - `restore_on_focus_lost` (bool): restore on focus lost.
 - `set_on_vimenter` (bool): enforce default on startup.
 - `set_on_insertleave` (bool): enforce default on insert leave.
+- `restore_only_if_default` (bool): only restore if current layout is default (default: true).
 - `device` (string|nil): keyboard name from `hyprctl devices -j`.
 - `layouts` (table|nil): explicit layouts list (e.g. `{ "us", "ru" }`).
 - `keymap_map` (table|nil): map of `active_keymap` to layout code.
