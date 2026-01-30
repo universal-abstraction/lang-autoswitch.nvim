@@ -15,33 +15,39 @@ local function now_ms()
   return math.floor(os.time() * 1000)
 end
 
-local function run(cmd)
-  local result = vim.system(cmd, { text = true }):wait()
-  if result.code ~= 0 then
-    return nil, result.stderr
-  end
-  return result.stdout, nil
+local function run_async(cmd, cb)
+  vim.system(cmd, { text = true }, function(result)
+    if result.code ~= 0 then
+      cb(nil, result.stderr)
+      return
+    end
+    cb(result.stdout, nil)
+  end)
 end
 
-function M.get_keyboards(opts, fresh)
+function M.get_keyboards(opts, fresh, cb)
   local ttl = tonumber(opts.cache_ttl_ms) or 0
   if not fresh and ttl > 0 and state.cache.kbs then
     local age = now_ms() - (state.cache.at or 0)
     if age <= ttl then
-      return state.cache.kbs
+      cb(state.cache.kbs, nil)
+      return
     end
   end
 
-  local out = run({ "hyprctl", "devices", "-j" })
-  if not out or out == "" then
-    return nil
-  end
-  local ok, data = pcall(vim.json.decode, out)
-  if not ok or type(data) ~= "table" then
-    return nil
-  end
-  state.cache = { kbs = data.keyboards, at = now_ms() }
-  return data.keyboards
+  run_async({ "hyprctl", "devices", "-j" }, function(out, err)
+    if not out or out == "" then
+      cb(nil, err or "Empty backend output")
+      return
+    end
+    local ok, data = pcall(vim.json.decode, out)
+    if not ok or type(data) ~= "table" then
+      cb(nil, "Failed to decode backend output")
+      return
+    end
+    state.cache = { kbs = data.keyboards, at = now_ms() }
+    cb(data.keyboards, nil)
+  end)
 end
 
 function M.pick_keyboard(kbs, device)
@@ -90,13 +96,15 @@ function M.get_active(kb, _opts)
   }
 end
 
-function M.set_layout(kb, opts, index)
+function M.set_layout(kb, opts, index, cb)
   local device = opts.device or kb.name
-  local _, err = run({ "hyprctl", "switchxkblayout", device, tostring(index) })
-  if err then
-    return false, err
-  end
-  return true, nil
+  run_async({ "hyprctl", "switchxkblayout", device, tostring(index) }, function(_, err)
+    if err then
+      cb(false, err)
+      return
+    end
+    cb(true, nil)
+  end)
 end
 
 function M.is_available()

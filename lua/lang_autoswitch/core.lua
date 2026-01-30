@@ -72,6 +72,11 @@ function Core.new(backend, opts)
     last_known_layout = nil,
     last_set_layout = nil,
     last_set_at = nil,
+    intent_seq = 0,
+    latest_intent_id = 0,
+    active_intent_id = nil,
+    in_flight = false,
+    pending_intent = nil,
   }
   return self
 end
@@ -90,15 +95,14 @@ function Core:should_debounce(key)
   return false
 end
 
-function Core:get_current_layout()
-  local kbs = self.backend.get_keyboards(self.opts, true)
+function Core:_current_from_keyboards(kbs)
   local kb = self.backend.pick_keyboard(kbs, self.opts.device)
   if not kb then
-    return nil, nil, "No keyboard found in backend output"
+    return nil, nil, nil, "No keyboard found in backend output"
   end
   local layouts = self.backend.get_layouts(kb, self.opts)
   if not layouts then
-    return nil, nil, "No layouts available"
+    return nil, nil, nil, "No layouts available"
   end
   local active = self.backend.get_active(kb, self.opts)
   local idx = find_layout_index(
@@ -109,20 +113,29 @@ function Core:get_current_layout()
     self.opts.keymap_regex_map
   )
   local current = layouts[idx + 1]
-  self.state.last_known_layout = current
-  return current, kb, nil
+  return current, kb, layouts, nil
 end
 
-function Core:set_layout(target)
-  local kbs = self.backend.get_keyboards(self.opts)
-  local kb = self.backend.pick_keyboard(kbs, self.opts.device)
-  if not kb then
-    return false, "No keyboard found in backend output"
-  end
-  local layouts = self.backend.get_layouts(kb, self.opts)
-  if not layouts then
-    return false, "No layouts available"
-  end
+function Core:_get_current_layout_async(intent_id, cb, allow_stale)
+  self.backend.get_keyboards(self.opts, true, function(kbs, err)
+    if intent_id and not allow_stale and intent_id ~= self.state.latest_intent_id then
+      cb(nil, nil, nil, "stale")
+      return
+    end
+    if not kbs then
+      cb(nil, nil, nil, err or "No keyboards found in backend output")
+      return
+    end
+    local current, kb, layouts, cerr = self:_current_from_keyboards(kbs)
+    if not current then
+      cb(nil, nil, nil, cerr or "No layouts available")
+      return
+    end
+    cb(current, kb, layouts, nil)
+  end)
+end
+
+function Core:_set_layout_with_kb_async(intent_id, kb, layouts, target, cb)
   local idx
   for i, code in ipairs(layouts) do
     if code == target then
@@ -131,15 +144,147 @@ function Core:set_layout(target)
     end
   end
   if idx == nil then
-    return false, "Target layout not in layout list"
+    cb(false, "Target layout not in layout list")
+    return
   end
-  local ok, err = self.backend.set_layout(kb, self.opts, idx)
-  if ok then
-    self.state.last_known_layout = target
-    self.state.last_set_layout = target
-    self.state.last_set_at = now_ms()
+  self.backend.set_layout(kb, self.opts, idx, function(ok, err)
+    if intent_id and intent_id ~= self.state.latest_intent_id then
+      cb(false, "stale")
+      return
+    end
+    cb(ok, err)
+  end)
+end
+
+function Core:_next_intent(kind)
+  self.state.intent_seq = self.state.intent_seq + 1
+  local intent = { id = self.state.intent_seq, kind = kind }
+  self.state.latest_intent_id = intent.id
+  return intent
+end
+
+function Core:_finish_intent(intent_id)
+  if intent_id ~= self.state.active_intent_id then
+    return
   end
-  return ok, err
+  self.state.in_flight = false
+  self.state.active_intent_id = nil
+  local next_intent = self.state.pending_intent
+  self.state.pending_intent = nil
+  if next_intent then
+    self:_start_intent(next_intent)
+  end
+end
+
+function Core:_start_intent(intent)
+  self.state.in_flight = true
+  self.state.active_intent_id = intent.id
+  self:_run_intent(intent)
+end
+
+function Core:_enqueue(kind)
+  local intent = self:_next_intent(kind)
+  if self.state.in_flight then
+    self.state.pending_intent = intent
+    return
+  end
+  self:_start_intent(intent)
+end
+
+function Core:_run_intent(intent)
+  if intent.kind ~= "set_default" and intent.kind ~= "restore_prev" then
+    self:_finish_intent(intent.id)
+    return
+  end
+  self:_get_current_layout_async(intent.id, function(current, kb, layouts, err)
+    if intent.id ~= self.state.latest_intent_id then
+      self:_finish_intent(intent.id)
+      return
+    end
+    if not current then
+      self:_finish_intent(intent.id)
+      return
+    end
+    self.state.last_known_layout = current
+    if intent.kind == "set_default" then
+      if not self.opts.default_layout or self.opts.default_layout == "" then
+        self.state.prev_layout = nil
+        self:_finish_intent(intent.id)
+        return
+      end
+      if current == self.opts.default_layout then
+        self.state.prev_layout = nil
+        self:_finish_intent(intent.id)
+        return
+      end
+      self.state.prev_layout = current
+      self:_set_layout_with_kb_async(intent.id, kb, layouts, self.opts.default_layout, function(ok, serr)
+        if intent.id ~= self.state.latest_intent_id then
+          self:_finish_intent(intent.id)
+          return
+        end
+        if ok then
+          self.state.last_known_layout = self.opts.default_layout
+          self.state.last_set_layout = self.opts.default_layout
+          self.state.last_set_at = now_ms()
+        elseif serr then
+          vim.notify(("lang_autoswitch: failed to set default layout: %s"):format(serr), vim.log.levels.WARN)
+        end
+        self:_finish_intent(intent.id)
+      end)
+      return
+    end
+
+    if self.opts.restore_only_if_default and self.opts.default_layout and self.opts.default_layout ~= "" then
+      if current ~= self.opts.default_layout then
+        self.state.prev_layout = nil
+        self:_finish_intent(intent.id)
+        return
+      end
+    end
+    local prev = self.state.prev_layout
+    if not prev or prev == self.opts.default_layout then
+      self.state.prev_layout = nil
+      self:_finish_intent(intent.id)
+      return
+    end
+    self:_set_layout_with_kb_async(intent.id, kb, layouts, prev, function(ok, serr)
+      if intent.id ~= self.state.latest_intent_id then
+        self:_finish_intent(intent.id)
+        return
+      end
+      self.state.prev_layout = nil
+      if ok then
+        self.state.last_known_layout = prev
+        self.state.last_set_layout = prev
+        self.state.last_set_at = now_ms()
+      elseif serr then
+        vim.notify(("lang_autoswitch: failed to restore layout: %s"):format(serr), vim.log.levels.WARN)
+      end
+      self:_finish_intent(intent.id)
+    end)
+  end)
+end
+
+function Core:get_current_layout()
+  local done = false
+  local current, kb, err
+  self:_get_current_layout_async(nil, function(cur, cur_kb, _layouts, cur_err)
+    current = cur
+    kb = cur_kb
+    err = cur_err
+    done = true
+  end, true)
+  vim.wait(2000, function()
+    return done
+  end, 10)
+  if not done then
+    return nil, nil, "Timeout while fetching layout"
+  end
+  if current then
+    self.state.last_known_layout = current
+  end
+  return current, kb, err
 end
 
 function Core:set_default()
@@ -150,61 +295,48 @@ function Core:set_default()
     self.state.prev_layout = nil
     return
   end
-  local current = self:get_current_layout()
-  if not current then
-    return
-  end
-  if current == self.opts.default_layout then
-    self.state.prev_layout = nil
-    return
-  end
-  self.state.prev_layout = current
-  local ok, err = self:set_layout(self.opts.default_layout)
-  if not ok and err then
-    vim.notify(("lang_autoswitch: failed to set default layout: %s"):format(err), vim.log.levels.WARN)
-  end
+  self:_enqueue("set_default")
 end
 
 function Core:restore_prev()
   if self:should_debounce("restore_prev") then
     return
   end
-  if self.opts.restore_only_if_default and self.opts.default_layout and self.opts.default_layout ~= "" then
-    local current = self:get_current_layout()
-    if current and current ~= self.opts.default_layout then
-      self.state.prev_layout = nil
-      return
-    end
-  end
-  local prev = self.state.prev_layout
-  if not prev or prev == self.opts.default_layout then
-    self.state.prev_layout = nil
-    return
-  end
-  local ok, err = self:set_layout(prev)
-  self.state.prev_layout = nil
-  if not ok and err then
-    vim.notify(("lang_autoswitch: failed to restore layout: %s"):format(err), vim.log.levels.WARN)
-  end
+  self:_enqueue("restore_prev")
 end
 
 function Core:self_check()
+  local done = false
+  local ok, msg = false, "lang_autoswitch: self-check timed out"
   if self.backend.is_available then
-    local ok, msg = self.backend.is_available()
-    if not ok then
-      return false, msg or "lang_autoswitch: backend unavailable"
+    local avail, avail_msg = self.backend.is_available()
+    if not avail then
+      return false, avail_msg or "lang_autoswitch: backend unavailable"
     end
   end
-  local kbs = self.backend.get_keyboards(self.opts)
-  if not kbs or #kbs == 0 then
-    return false, "lang_autoswitch: no keyboards found in backend output"
-  end
-  local current, kb, err = self:get_current_layout()
-  if not current then
-    return false, ("lang_autoswitch: failed to detect current layout: %s"):format(err or "unknown error")
-  end
-  local name = kb and kb.name or "unknown"
-  return true, ("lang_autoswitch: OK (device: %s, layout: %s)"):format(name, current)
+  self.backend.get_keyboards(self.opts, true, function(kbs, err)
+    if not kbs or #kbs == 0 then
+      ok = false
+      msg = "lang_autoswitch: no keyboards found in backend output"
+      done = true
+      return
+    end
+    local current, kb, _layouts, cerr = self:_current_from_keyboards(kbs)
+    if not current then
+      ok = false
+      msg = ("lang_autoswitch: failed to detect current layout: %s"):format(cerr or "unknown error")
+      done = true
+      return
+    end
+    local name = kb and kb.name or "unknown"
+    ok = true
+    msg = ("lang_autoswitch: OK (device: %s, layout: %s)"):format(name, current)
+    done = true
+  end)
+  vim.wait(2000, function()
+    return done
+  end, 10)
+  return ok, msg
 end
 
 return Core
