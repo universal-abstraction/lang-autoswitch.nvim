@@ -50,6 +50,7 @@ function M.setup(user_opts)
       callback = function()
         local mode = vim.api.nvim_get_mode().mode
         if mode:find("i") then
+          core:focus_enter("noop")
           return
         end
         core:focus_enter("set_default")
@@ -64,6 +65,7 @@ function M.setup(user_opts)
       callback = function()
         local mode = vim.api.nvim_get_mode().mode
         if mode:find("i") then
+          core:focus_enter("noop")
           return
         end
         core:focus_enter("set_default")

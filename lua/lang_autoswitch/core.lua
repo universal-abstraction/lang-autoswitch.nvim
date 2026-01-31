@@ -302,6 +302,7 @@ function Core:_handle_action(kind)
   end
   if kind == "restore_prev" then
     self:restore_prev()
+    return
   end
 end
 
