@@ -17,6 +17,10 @@ local defaults = {
   keymap_regex_map = nil, -- optional list of { pattern = "English", layout = "us" }
   cache_ttl_ms = 1000, -- cache `hyprctl devices -j` for this many ms
   debounce_ms = 75, -- debounce layout switching to reduce duplicate calls
+  focus_lock = true, -- serialize focus transitions across instances
+  focus_lock_path = nil, -- optional lock file path
+  focus_lock_ttl_ms = 2500, -- consider lock stale after this many ms
+  focus_lock_poll_ms = 50, -- retry interval while waiting for lock
 }
 
 local core
@@ -48,7 +52,7 @@ function M.setup(user_opts)
         if mode:find("i") then
           return
         end
-        core:set_default()
+        core:focus_enter("set_default")
       end,
       desc = "Set default layout on focus gained",
     })
@@ -62,7 +66,7 @@ function M.setup(user_opts)
         if mode:find("i") then
           return
         end
-        core:set_default()
+        core:focus_enter("set_default")
       end,
       desc = "Set default layout on startup",
     })
@@ -72,7 +76,7 @@ function M.setup(user_opts)
     vim.api.nvim_create_autocmd("FocusLost", {
       group = group,
       callback = function()
-        core:restore_prev()
+        core:focus_leave("restore_prev")
       end,
       desc = "Restore previous layout on focus lost",
     })
@@ -98,6 +102,14 @@ function M.setup(user_opts)
       end
     end,
     desc = "Restore previous layout on InsertEnter",
+  })
+
+  vim.api.nvim_create_autocmd("VimLeavePre", {
+    group = group,
+    callback = function()
+      core:focus_leave("restore_prev")
+    end,
+    desc = "Restore and release lock on exit",
   })
 
   vim.api.nvim_create_user_command("LangAutoswitchSelfCheck", function()
