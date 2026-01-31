@@ -250,7 +250,7 @@ function Core:_try_acquire_lock()
     pcall(uv.fs_rmdir, path)
   end
   local ok = uv and uv.fs_mkdir and uv.fs_mkdir(path, 448) or false
-  if ok == true then
+  if ok then
     self.state.lock_owned = true
     return true
   end
