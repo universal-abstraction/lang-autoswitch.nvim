@@ -62,6 +62,10 @@ Optional configuration:
 - `keymap_regex_map` (table|nil): list of `{ pattern = "English", layout = "us" }`.
 - `cache_ttl_ms` (number): cache `hyprctl devices -j` for N ms (default 1000).
 - `debounce_ms` (number): debounce layout switching in ms (default 75).
+- `focus_lock` (bool): serialize focus transitions across instances (default: true).
+- `focus_lock_path` (string|nil): lock directory path (default: `stdpath("state")/lang-autoswitch.lock`).
+- `focus_lock_ttl_ms` (number): lock stale timeout in ms (default 2500).
+- `focus_lock_poll_ms` (number): lock retry interval in ms (default 50).
 
 ## Notes
 - If focus events don’t fire in terminal, ensure `focus-events` are enabled in tmux.

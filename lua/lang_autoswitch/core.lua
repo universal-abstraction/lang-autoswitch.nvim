@@ -10,6 +10,10 @@ local function now_ms()
   return math.floor(os.time() * 1000)
 end
 
+local function epoch_ms()
+  return math.floor(os.time() * 1000)
+end
+
 local function infer_layout_from_keymap(active_keymap, map, regex_map)
   if type(active_keymap) ~= "string" then
     return nil
@@ -77,6 +81,11 @@ function Core.new(backend, opts)
     active_intent_id = nil,
     in_flight = false,
     pending_intent = nil,
+    lock_owned = false,
+    lock_blocked = false,
+    lock_polling = false,
+    pending_kind = nil,
+    release_after_finish = false,
   }
   return self
 end
@@ -169,6 +178,12 @@ function Core:_finish_intent(intent_id)
   end
   self.state.in_flight = false
   self.state.active_intent_id = nil
+  if self.state.release_after_finish then
+    self.state.release_after_finish = false
+    self.state.pending_intent = nil
+    self:_release_lock()
+    return
+  end
   local next_intent = self.state.pending_intent
   self.state.pending_intent = nil
   if next_intent then
@@ -189,6 +204,143 @@ function Core:_enqueue(kind)
     return
   end
   self:_start_intent(intent)
+end
+
+function Core:_lock_path()
+  if self.opts.focus_lock_path and self.opts.focus_lock_path ~= "" then
+    return self.opts.focus_lock_path
+  end
+  return vim.fn.stdpath("state") .. "/lang-autoswitch.lock"
+end
+
+function Core:_lock_ttl_ms()
+  return tonumber(self.opts.focus_lock_ttl_ms) or 2500
+end
+
+function Core:_lock_poll_ms()
+  return tonumber(self.opts.focus_lock_poll_ms) or 50
+end
+
+function Core:_lock_is_stale(path)
+  local ttl = self:_lock_ttl_ms()
+  if ttl <= 0 then
+    return false
+  end
+  local stat = uv and uv.fs_stat and uv.fs_stat(path) or nil
+  if stat and stat.mtime and stat.mtime.sec then
+    local age = epoch_ms() - (stat.mtime.sec * 1000)
+    return age > ttl
+  end
+  return false
+end
+
+function Core:_try_acquire_lock()
+  if not self.opts.focus_lock then
+    return true
+  end
+  if self.state.lock_owned then
+    return true
+  end
+  local path = self:_lock_path()
+  local stat = uv and uv.fs_stat and uv.fs_stat(path) or nil
+  if stat then
+    if not self:_lock_is_stale(path) then
+      return false
+    end
+    pcall(uv.fs_rmdir, path)
+  end
+  local ok = uv and uv.fs_mkdir and uv.fs_mkdir(path, 448) or false
+  if ok == true then
+    self.state.lock_owned = true
+    return true
+  end
+  return false
+end
+
+function Core:_release_lock()
+  if not self.opts.focus_lock then
+    return
+  end
+  if not self.state.lock_owned then
+    return
+  end
+  local path = self:_lock_path()
+  pcall(uv.fs_rmdir, path)
+  self.state.lock_owned = false
+  self.state.lock_blocked = false
+end
+
+function Core:_start_lock_poll()
+  if self.state.lock_polling then
+    return
+  end
+  self.state.lock_polling = true
+  local function tick()
+    if not self.state.lock_blocked then
+      self.state.lock_polling = false
+      return
+    end
+    if self:_try_acquire_lock() then
+      self.state.lock_blocked = false
+      self.state.lock_polling = false
+      local kind = self.state.pending_kind
+      self.state.pending_kind = nil
+      if kind then
+        self:_handle_action(kind)
+      end
+      return
+    end
+    vim.defer_fn(tick, self:_lock_poll_ms())
+  end
+  vim.defer_fn(tick, self:_lock_poll_ms())
+end
+
+function Core:_handle_action(kind)
+  if kind == "set_default" then
+    self:set_default()
+    return
+  end
+  if kind == "restore_prev" then
+    self:restore_prev()
+  end
+end
+
+function Core:focus_enter(kind)
+  if not self.opts.focus_lock then
+    self:_handle_action(kind)
+    return
+  end
+  if self:_try_acquire_lock() then
+    self.state.lock_blocked = false
+    self.state.pending_kind = nil
+    self:_handle_action(kind)
+    return
+  end
+  self.state.lock_blocked = true
+  self.state.pending_kind = kind
+  self:_start_lock_poll()
+end
+
+function Core:focus_leave(kind)
+  if not self.opts.focus_lock then
+    if kind == "restore_prev" then
+      self:restore_prev()
+    end
+    return
+  end
+  if not self.state.lock_owned then
+    return
+  end
+  self.state.pending_intent = nil
+  if kind == "restore_prev" then
+    self.state.release_after_finish = true
+    if not self:restore_prev() then
+      self.state.release_after_finish = false
+      self:_release_lock()
+    end
+    return
+  end
+  self:_release_lock()
 end
 
 function Core:_run_intent(intent)
@@ -288,21 +440,35 @@ function Core:get_current_layout()
 end
 
 function Core:set_default()
+  if self.opts.focus_lock and not self.state.lock_owned then
+    if self.state.lock_blocked then
+      self.state.pending_kind = "set_default"
+    end
+    return false
+  end
   if self:should_debounce("set_default") then
-    return
+    return false
   end
   if not self.opts.default_layout or self.opts.default_layout == "" then
     self.state.prev_layout = nil
-    return
+    return false
   end
   self:_enqueue("set_default")
+  return true
 end
 
 function Core:restore_prev()
+  if self.opts.focus_lock and not self.state.lock_owned then
+    if self.state.lock_blocked then
+      self.state.pending_kind = "restore_prev"
+    end
+    return false
+  end
   if self:should_debounce("restore_prev") then
-    return
+    return false
   end
   self:_enqueue("restore_prev")
+  return true
 end
 
 function Core:self_check()
