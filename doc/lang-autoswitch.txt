@@ -66,6 +66,9 @@ set_on_insertleave (boolean)
 restore_only_if_default (boolean)
   Only restore when current layout is the default. Default: true.
 
+log_level (string|number)
+  Log verbosity: trace, debug, info, warn, error or vim.log.levels.*.
+  Default: "warn".
 
 cache_ttl_ms (number)
   Cache backend query output for this many milliseconds. Default: 1000.

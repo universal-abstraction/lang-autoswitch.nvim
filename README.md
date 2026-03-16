@@ -74,6 +74,7 @@ require("lang_autoswitch").setup({
 - `set_on_vimenter` (bool): enforce default on startup.
 - `set_on_insertleave` (bool): enforce default on insert leave.
 - `restore_only_if_default` (bool): only restore if current layout is default (default: true).
+- `log_level` (string|number): `trace`, `debug`, `info`, `warn`, `error` or `vim.log.levels.*` (default: `warn`).
 - `cache_ttl_ms` (number): cache backend query output for N ms (default 1000).
 - `debounce_ms` (number): debounce layout switching in ms (default 75).
 - `focus_lock` (bool): serialize focus transitions across instances (default: true).

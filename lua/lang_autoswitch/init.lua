@@ -17,6 +17,7 @@ local defaults = {
   keymap_map = nil, -- deprecated
   keymap_regex_map = nil, -- deprecated
   cache_ttl_ms = 1000, -- cache backend query output for this many ms
+  log_level = "warn", -- trace|debug|info|warn|error or vim.log.levels.*
   debounce_ms = 75, -- debounce layout switching to reduce duplicate calls
   focus_lock = true, -- serialize focus transitions across instances
   focus_lock_path = nil, -- optional lock file path
@@ -79,8 +80,20 @@ local function normalize_backend(opts)
   return instance, opts
 end
 
+local function normalize_log_level(value)
+  if type(value) == "number" then
+    return value
+  end
+  if type(value) ~= "string" then
+    return vim.log.levels.WARN
+  end
+  local key = value:upper()
+  return vim.log.levels[key] or vim.log.levels.WARN
+end
+
 function M._self_check(user_opts)
   local opts = vim.tbl_deep_extend("force", {}, defaults, user_opts or {})
+  opts.log_level = normalize_log_level(opts.log_level)
   local active_backend = normalize_backend(opts)
   local instance = Core.new(active_backend, opts)
   return instance:self_check()
@@ -88,6 +101,7 @@ end
 
 function M.setup(user_opts)
   local opts = vim.tbl_deep_extend("force", {}, defaults, user_opts or {})
+  opts.log_level = normalize_log_level(opts.log_level)
   backend = normalize_backend(opts)
   if backend.is_available then
     local ok, msg = backend:is_available()

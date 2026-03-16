@@ -53,6 +53,17 @@ function Core.new(backend, opts)
   return self
 end
 
+function Core:_log(level, msg)
+  local threshold = self.opts.log_level
+  if type(threshold) ~= "number" then
+    return
+  end
+  if level < threshold then
+    return
+  end
+  vim.notify(("lang_autoswitch: %s"):format(msg), level)
+end
+
 function Core:should_debounce(key)
   local window = tonumber(self.opts.debounce_ms) or 0
   if window <= 0 then
@@ -77,16 +88,22 @@ function Core:_current_from_keyboards(kbs)
     return nil, nil, nil, "No layouts available"
   end
   local active = self.backend:get_active(kb)
+  self:_log(vim.log.levels.DEBUG, ("active keymap=%s index=%s"):format(
+    tostring(active and active.keymap),
+    tostring(active and active.index)
+  ))
   local idx = find_layout_index(
     layouts,
     active and active.keymap,
     active and active.index
   )
   local current = layouts[idx + 1]
+  self:_log(vim.log.levels.DEBUG, ("resolved current layout=%s"):format(tostring(current)))
   return current, kb, layouts, nil
 end
 
 function Core:_get_current_layout_async(intent_id, cb, allow_stale)
+  self:_log(vim.log.levels.TRACE, "fetching current layout")
   self.backend:get_keyboards(true, function(kbs, err)
     if intent_id and not allow_stale and intent_id ~= self.state.latest_intent_id then
       cb(nil, nil, nil, "stale")
@@ -310,6 +327,7 @@ function Core:_run_intent(intent)
     self:_finish_intent(intent.id)
     return
   end
+  self:_log(vim.log.levels.DEBUG, ("intent start kind=%s id=%s"):format(intent.kind, intent.id))
   self:_get_current_layout_async(intent.id, function(current, kb, layouts, err)
     if intent.id ~= self.state.latest_intent_id then
       self:_finish_intent(intent.id)
@@ -323,16 +341,19 @@ function Core:_run_intent(intent)
     if intent.kind == "set_default" then
       local default_layout = self.backend.get_default_layout and self.backend:get_default_layout() or nil
       if not default_layout or default_layout == "" then
+        self:_log(vim.log.levels.DEBUG, "no default_layout configured")
         self.state.prev_layout = nil
         self:_finish_intent(intent.id)
         return
       end
       if current == default_layout then
+        self:_log(vim.log.levels.DEBUG, "current layout already default")
         self.state.prev_layout = nil
         self:_finish_intent(intent.id)
         return
       end
       self.state.prev_layout = current
+      self:_log(vim.log.levels.INFO, ("switching to default layout=%s"):format(default_layout))
       self:_set_layout_with_kb_async(intent.id, kb, layouts, default_layout, function(ok, serr)
         if intent.id ~= self.state.latest_intent_id then
           self:_finish_intent(intent.id)
@@ -342,6 +363,7 @@ function Core:_run_intent(intent)
           self.state.last_known_layout = default_layout
           self.state.last_set_layout = default_layout
           self.state.last_set_at = now_ms()
+          self:_log(vim.log.levels.INFO, ("set default layout=%s"):format(default_layout))
         elseif serr then
           vim.notify(("lang_autoswitch: failed to set default layout: %s"):format(serr), vim.log.levels.WARN)
         end
@@ -353,6 +375,7 @@ function Core:_run_intent(intent)
     local default_layout = self.backend.get_default_layout and self.backend:get_default_layout() or nil
     if self.opts.restore_only_if_default and default_layout and default_layout ~= "" then
       if current ~= default_layout then
+        self:_log(vim.log.levels.DEBUG, "restore skipped; current not default")
         self.state.prev_layout = nil
         self:_finish_intent(intent.id)
         return
@@ -360,10 +383,12 @@ function Core:_run_intent(intent)
     end
     local prev = self.state.prev_layout
     if not prev or (default_layout and prev == default_layout) then
+      self:_log(vim.log.levels.DEBUG, "no previous layout to restore")
       self.state.prev_layout = nil
       self:_finish_intent(intent.id)
       return
     end
+    self:_log(vim.log.levels.INFO, ("restoring previous layout=%s"):format(prev))
     self:_set_layout_with_kb_async(intent.id, kb, layouts, prev, function(ok, serr)
       if intent.id ~= self.state.latest_intent_id then
         self:_finish_intent(intent.id)
@@ -374,6 +399,7 @@ function Core:_run_intent(intent)
         self.state.last_known_layout = prev
         self.state.last_set_layout = prev
         self.state.last_set_at = now_ms()
+        self:_log(vim.log.levels.INFO, ("restored layout=%s"):format(prev))
       elseif serr then
         vim.notify(("lang_autoswitch: failed to restore layout: %s"):format(serr), vim.log.levels.WARN)
       end
@@ -385,6 +411,7 @@ end
 function Core:get_current_layout()
   local done = false
   local current, kb, err
+  self:_log(vim.log.levels.TRACE, "sync get_current_layout")
   self:_get_current_layout_async(nil, function(cur, cur_kb, _layouts, cur_err)
     current = cur
     kb = cur_kb
@@ -411,10 +438,12 @@ function Core:set_default()
     return false
   end
   if self:should_debounce("set_default") then
+    self:_log(vim.log.levels.DEBUG, "set_default debounced")
     return false
   end
   local default_layout = self.backend.get_default_layout and self.backend:get_default_layout() or nil
   if not default_layout or default_layout == "" then
+    self:_log(vim.log.levels.DEBUG, "set_default skipped (no default_layout)")
     self.state.prev_layout = nil
     return false
   end
@@ -430,6 +459,7 @@ function Core:restore_prev()
     return false
   end
   if self:should_debounce("restore_prev") then
+    self:_log(vim.log.levels.DEBUG, "restore_prev debounced")
     return false
   end
   self:_enqueue("restore_prev")
