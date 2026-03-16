@@ -14,46 +14,9 @@ local function epoch_ms()
   return math.floor(os.time() * 1000)
 end
 
-local function infer_layout_from_keymap(active_keymap, map, regex_map)
-  if type(active_keymap) ~= "string" then
-    return nil
-  end
-  if map then
-    local mapped = map[active_keymap]
-    if mapped then
-      return mapped
-    end
-  end
-  if type(regex_map) == "table" then
-    for _, item in ipairs(regex_map) do
-      if type(item) == "table" and type(item.pattern) == "string" and type(item.layout) == "string" then
-        if active_keymap:match(item.pattern) then
-          return item.layout
-        end
-      end
-    end
-  end
-  local lower = active_keymap:lower()
-  if lower:find("english", 1, true) then
-    return "us"
-  end
-  if lower:find("russian", 1, true) or lower:find("рус", 1, true) then
-    return "ru"
-  end
-  return nil
-end
-
-local function find_layout_index(layouts, active_keymap, active_idx, keymap_map, keymap_regex_map)
+local function find_layout_index(layouts, active_keymap, active_idx)
   if type(active_idx) == "number" then
     return active_idx
-  end
-  local inferred = infer_layout_from_keymap(active_keymap, keymap_map, keymap_regex_map)
-  if inferred then
-    for i, code in ipairs(layouts) do
-      if code == inferred then
-        return i - 1
-      end
-    end
   end
   if type(active_keymap) == "string" then
     local needle = active_keymap:lower()
@@ -105,28 +68,26 @@ function Core:should_debounce(key)
 end
 
 function Core:_current_from_keyboards(kbs)
-  local kb = self.backend.pick_keyboard(kbs, self.opts.device)
+  local kb = self.backend:pick_keyboard(kbs)
   if not kb then
     return nil, nil, nil, "No keyboard found in backend output"
   end
-  local layouts = self.backend.get_layouts(kb, self.opts)
+  local layouts = self.backend:get_layouts(kb)
   if not layouts then
     return nil, nil, nil, "No layouts available"
   end
-  local active = self.backend.get_active(kb, self.opts)
+  local active = self.backend:get_active(kb)
   local idx = find_layout_index(
     layouts,
     active and active.keymap,
-    active and active.index,
-    self.opts.keymap_map,
-    self.opts.keymap_regex_map
+    active and active.index
   )
   local current = layouts[idx + 1]
   return current, kb, layouts, nil
 end
 
 function Core:_get_current_layout_async(intent_id, cb, allow_stale)
-  self.backend.get_keyboards(self.opts, true, function(kbs, err)
+  self.backend:get_keyboards(true, function(kbs, err)
     if intent_id and not allow_stale and intent_id ~= self.state.latest_intent_id then
       cb(nil, nil, nil, "stale")
       return
@@ -156,7 +117,7 @@ function Core:_set_layout_with_kb_async(intent_id, kb, layouts, target, cb)
     cb(false, "Target layout not in layout list")
     return
   end
-  self.backend.set_layout(kb, self.opts, idx, function(ok, err)
+  self.backend:set_layout(kb, idx, function(ok, err)
     if intent_id and intent_id ~= self.state.latest_intent_id then
       cb(false, "stale")
       return
@@ -360,25 +321,26 @@ function Core:_run_intent(intent)
     end
     self.state.last_known_layout = current
     if intent.kind == "set_default" then
-      if not self.opts.default_layout or self.opts.default_layout == "" then
+      local default_layout = self.backend.get_default_layout and self.backend:get_default_layout() or nil
+      if not default_layout or default_layout == "" then
         self.state.prev_layout = nil
         self:_finish_intent(intent.id)
         return
       end
-      if current == self.opts.default_layout then
+      if current == default_layout then
         self.state.prev_layout = nil
         self:_finish_intent(intent.id)
         return
       end
       self.state.prev_layout = current
-      self:_set_layout_with_kb_async(intent.id, kb, layouts, self.opts.default_layout, function(ok, serr)
+      self:_set_layout_with_kb_async(intent.id, kb, layouts, default_layout, function(ok, serr)
         if intent.id ~= self.state.latest_intent_id then
           self:_finish_intent(intent.id)
           return
         end
         if ok then
-          self.state.last_known_layout = self.opts.default_layout
-          self.state.last_set_layout = self.opts.default_layout
+          self.state.last_known_layout = default_layout
+          self.state.last_set_layout = default_layout
           self.state.last_set_at = now_ms()
         elseif serr then
           vim.notify(("lang_autoswitch: failed to set default layout: %s"):format(serr), vim.log.levels.WARN)
@@ -388,15 +350,16 @@ function Core:_run_intent(intent)
       return
     end
 
-    if self.opts.restore_only_if_default and self.opts.default_layout and self.opts.default_layout ~= "" then
-      if current ~= self.opts.default_layout then
+    local default_layout = self.backend.get_default_layout and self.backend:get_default_layout() or nil
+    if self.opts.restore_only_if_default and default_layout and default_layout ~= "" then
+      if current ~= default_layout then
         self.state.prev_layout = nil
         self:_finish_intent(intent.id)
         return
       end
     end
     local prev = self.state.prev_layout
-    if not prev or prev == self.opts.default_layout then
+    if not prev or (default_layout and prev == default_layout) then
       self.state.prev_layout = nil
       self:_finish_intent(intent.id)
       return
@@ -450,7 +413,8 @@ function Core:set_default()
   if self:should_debounce("set_default") then
     return false
   end
-  if not self.opts.default_layout or self.opts.default_layout == "" then
+  local default_layout = self.backend.get_default_layout and self.backend:get_default_layout() or nil
+  if not default_layout or default_layout == "" then
     self.state.prev_layout = nil
     return false
   end
@@ -476,12 +440,12 @@ function Core:self_check()
   local done = false
   local ok, msg = false, "lang_autoswitch: self-check timed out"
   if self.backend.is_available then
-    local avail, avail_msg = self.backend.is_available()
+    local avail, avail_msg = self.backend:is_available()
     if not avail then
       return false, avail_msg or "lang_autoswitch: backend unavailable"
     end
   end
-  self.backend.get_keyboards(self.opts, true, function(kbs, err)
+  self.backend:get_keyboards(true, function(kbs, err)
     if not kbs or #kbs == 0 then
       ok = false
       msg = "lang_autoswitch: no keyboards found in backend output"

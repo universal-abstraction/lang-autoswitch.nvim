@@ -1,21 +1,22 @@
 local Core = require("lang_autoswitch.core")
-local hyprland = require("lang_autoswitch.backend.hyprland")
 
 local M = {}
 
 local defaults = {
-  default_layout = "us",
+  backend = "hyprland",
+  backend_config = nil,
+  default_layout = "us", -- deprecated (use backend_config.default_layout)
   restore_on_insert = true,
   set_on_focus_gained = true,
   restore_on_focus_lost = true,
   set_on_vimenter = true,
   set_on_insertleave = true,
   restore_only_if_default = true,
-  device = nil,   -- optional keyboard name from `hyprctl devices -j`
-  layouts = nil,  -- optional list like { "us", "ru" } if auto-detection fails
-  keymap_map = nil, -- optional map of active_keymap -> layout code
-  keymap_regex_map = nil, -- optional list of { pattern = "English", layout = "us" }
-  cache_ttl_ms = 1000, -- cache `hyprctl devices -j` for this many ms
+  device = nil,   -- deprecated (use backend_config.device)
+  layouts = nil,  -- deprecated (use backend_config.layouts)
+  keymap_map = nil, -- deprecated
+  keymap_regex_map = nil, -- deprecated
+  cache_ttl_ms = 1000, -- cache backend query output for this many ms
   debounce_ms = 75, -- debounce layout switching to reduce duplicate calls
   focus_lock = true, -- serialize focus transitions across instances
   focus_lock_path = nil, -- optional lock file path
@@ -24,24 +25,79 @@ local defaults = {
 }
 
 local core
+local backend
+
+local function resolve_backend_module(name)
+  if name == "sway" then
+    return require("lang_autoswitch.backend.sway")
+  end
+  return require("lang_autoswitch.backend.hyprland")
+end
+
+local function normalize_backend(opts)
+  if type(opts.backend) == "table" and opts.backend.get_keyboards and not opts.backend.new then
+    if opts.backend.cfg or opts.backend.state then
+      return opts.backend, opts
+    end
+  end
+
+  local backend_name = opts.backend
+  local backend_config = opts.backend_config or {}
+
+  if type(opts.backend) == "table" and opts.backend.new and not opts.backend.name then
+    local legacy = {
+      default_layout = opts.default_layout,
+      device = opts.device,
+      layouts = opts.layouts,
+    }
+    backend_config = vim.tbl_deep_extend("force", {}, legacy, backend_config)
+    if backend_config.cache_ttl_ms == nil then
+      backend_config.cache_ttl_ms = opts.cache_ttl_ms
+    end
+    local instance = opts.backend.new and opts.backend.new(backend_config) or opts.backend
+    return instance, opts
+  end
+
+  if type(opts.backend) == "table" then
+    backend_name = opts.backend.name or backend_name
+    backend_config = vim.tbl_deep_extend("force", {}, backend_config, opts.backend)
+    backend_config.name = nil
+  end
+
+  local legacy = {
+    default_layout = opts.default_layout,
+    device = opts.device,
+    layouts = opts.layouts,
+  }
+  backend_config = vim.tbl_deep_extend("force", {}, legacy, backend_config)
+  if backend_config.cache_ttl_ms == nil then
+    backend_config.cache_ttl_ms = opts.cache_ttl_ms
+  end
+
+  local backend_module = resolve_backend_module(backend_name)
+  local instance = backend_module.new and backend_module.new(backend_config) or backend_module
+  return instance, opts
+end
 
 function M._self_check(user_opts)
   local opts = vim.tbl_deep_extend("force", {}, defaults, user_opts or {})
-  local instance = Core.new(hyprland, opts)
+  local active_backend = normalize_backend(opts)
+  local instance = Core.new(active_backend, opts)
   return instance:self_check()
 end
 
 function M.setup(user_opts)
   local opts = vim.tbl_deep_extend("force", {}, defaults, user_opts or {})
-  if hyprland.is_available then
-    local ok, msg = hyprland.is_available()
+  backend = normalize_backend(opts)
+  if backend.is_available then
+    local ok, msg = backend:is_available()
     if not ok then
       vim.notify(msg or "lang_autoswitch: backend unavailable", vim.log.levels.WARN)
       return
     end
   end
 
-  core = Core.new(hyprland, opts)
+  core = Core.new(backend, opts)
   local group = vim.api.nvim_create_augroup("LangAutoswitch", { clear = true })
 
   if opts.set_on_focus_gained then

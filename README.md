@@ -6,7 +6,7 @@ Small Neovim plugin to auto-switch XKB layouts via pluggable backends.
 - Set a default layout on `InsertLeave` and `FocusGained`.
 - Restore previous layout on `InsertEnter` and `FocusLost`.
 - Optional device/layout overrides.
-- Backend architecture (currently Hyprland only).
+- Backend architecture (Hyprland and Sway).
 
 ## Usage (Default Behavior)
 - On startup (`VimEnter`), the default layout is enforced.
@@ -15,11 +15,11 @@ Small Neovim plugin to auto-switch XKB layouts via pluggable backends.
 
 ## Requirements
 - Neovim 0.10+ (uses `vim.system`).
-- Hyprland with `hyprctl` in PATH (only supported backend for now).
+- Hyprland with `hyprctl` in PATH, or Sway with `swaymsg` in PATH.
 
 ## Backends
-- `hyprland` (current): uses `hyprctl devices -j` and `hyprctl switchxkblayout`.
-- Other backends are planned but not yet implemented.
+- `hyprland`: uses `hyprctl devices -j` and `hyprctl switchxkblayout`.
+- `sway`: uses `swaymsg -t get_inputs` and `swaymsg input <id> xkb_switch_layout`.
 
 ## Install (lazy.nvim)
 ```lua
@@ -37,38 +37,66 @@ Optional configuration:
   "your-user/lang-autoswitch.nvim",
   config = function()
     require("lang_autoswitch").setup({
-      default_layout = "us",
+      backend = "hyprland",
+      backend_config = {
+        default_layout = "us",
+        device = "at-translated-set-2-keyboard",
+        layouts = { "us", "ru" },
+      },
+      cache_ttl_ms = 1000,
       restore_on_insert = true,
       set_on_focus_gained = true,
       restore_on_focus_lost = true,
-      device = "at-translated-set-2-keyboard",
-      layouts = { "us", "ru" },
     })
   end,
 }
 ```
 
+Alternative backend config (inline):
+```lua
+require("lang_autoswitch").setup({
+  backend = {
+    name = "sway",
+    default_layout = "English (US)",
+    device = "1:1:AT_Translated_Set_2_keyboard",
+    layouts = { "English (US)", "Russian" },
+  },
+  cache_ttl_ms = 1000,
+})
+```
+
 ## Options
-- `default_layout` (string): layout to enforce in normal mode (default: `us`).
+- `backend` (string|table): backend name (`hyprland` or `sway`), backend config `{ name = ... }`, or backend instance.
+- `backend_config` (table|nil): backend-specific config (see below).
 - `restore_on_insert` (bool): restore previous layout on insert.
 - `set_on_focus_gained` (bool): enforce default on focus.
 - `restore_on_focus_lost` (bool): restore on focus lost.
 - `set_on_vimenter` (bool): enforce default on startup.
 - `set_on_insertleave` (bool): enforce default on insert leave.
 - `restore_only_if_default` (bool): only restore if current layout is default (default: true).
-- `device` (string|nil): keyboard name from `hyprctl devices -j`.
-- `layouts` (table|nil): explicit layouts list (e.g. `{ "us", "ru" }`).
-- `keymap_map` (table|nil): map of `active_keymap` to layout code.
-- `keymap_regex_map` (table|nil): list of `{ pattern = "English", layout = "us" }`.
-- `cache_ttl_ms` (number): cache `hyprctl devices -j` for N ms (default 1000).
+- `cache_ttl_ms` (number): cache backend query output for N ms (default 1000).
 - `debounce_ms` (number): debounce layout switching in ms (default 75).
 - `focus_lock` (bool): serialize focus transitions across instances (default: true).
 - `focus_lock_path` (string|nil): lock directory path (default: `stdpath("state")/lang-autoswitch.lock`).
 - `focus_lock_ttl_ms` (number): lock stale timeout in ms (default 2500).
 - `focus_lock_poll_ms` (number): lock retry interval in ms (default 50).
 
+## Backend Config
+The backend config lives in `backend_config` and is passed to the selected backend.
+
+Hyprland:
+- `default_layout` (string): layout to enforce in normal mode (default: `us`).
+- `device` (string|nil): keyboard name from `hyprctl devices -j`.
+- `layouts` (table|nil): explicit layouts list (e.g. `{ "us", "ru" }`).
+
+Sway:
+- `default_layout` (string): layout to enforce in normal mode (backend-specific).
+- `device` (string|nil): keyboard identifier from `swaymsg -t get_inputs`.
+- `layouts` (table|nil): explicit layouts list. Must match the backend's layout order.
+
 ## Notes
 - If focus events don’t fire in terminal, ensure `focus-events` are enabled in tmux.
+- For Sway, `layouts` is recommended because Sway reports human-readable layout names while switching uses indices.
 
 ## Help
 - `:h lang-autoswitch` (run `:helptags doc` after installation).

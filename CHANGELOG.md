@@ -1,7 +1,8 @@
 # Changelog
 
 ## Unreleased
-- Add backend/core split for future multi-backend support.
-- Add self-check command and `make test`.
-- Add caching, debounce, and startup default layout.
-- Add help docs and configuration toggles for startup/insertleave.
+- Add Sway backend and configurable backend selection.
+- Move backend-specific options into `backend_config` (with inline backend config support).
+- Make `default_layout` backend-specific and remove keymap mapping helpers.
+- Keep cache TTL global while passing it into backends by default.
+- Update docs/README for the new backend model.

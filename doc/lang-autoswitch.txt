@@ -1,16 +1,18 @@
-*lang-autoswitch.nvim*   Simple XKB layout autoswitch for Hyprland
+*lang-autoswitch.nvim*   Simple XKB layout autoswitch for Hyprland and Sway
 
 INTRODUCTION                                                     *lang-autoswitch*
 
 lang-autoswitch.nvim is a small Neovim plugin that switches XKB layouts using
-Hyprland's hyprctl. It sets a default layout on FocusGained/InsertLeave and
-restores the previous layout on FocusLost/InsertEnter.
+Hyprland's hyprctl or Sway's swaymsg. It sets a default layout on
+FocusGained/InsertLeave and restores the previous layout on
+FocusLost/InsertEnter.
 
 
 REQUIREMENTS                                                     *lang-autoswitch-requirements*
 
 - Neovim 0.10+ (uses |vim.system|)
-- Hyprland with `hyprctl` available in PATH
+- Hyprland with `hyprctl` available in PATH, or Sway with `swaymsg` available
+  in PATH
 
 
 SETUP                                                            *lang-autoswitch-setup*
@@ -21,15 +23,16 @@ Example (lazy.nvim):
     "your-user/lang-autoswitch.nvim",
     event = { "InsertEnter", "FocusGained" },
     opts = {
-      default_layout = "us",
+      backend = "hyprland",
+      backend_config = {
+        default_layout = "us",
+        device = "at-translated-set-2-keyboard",
+        layouts = { "us", "ru" },
+      },
+      cache_ttl_ms = 1000,
       restore_on_insert = true,
       set_on_focus_gained = true,
       restore_on_focus_lost = true,
-      device = "at-translated-set-2-keyboard",
-      layouts = { "us", "ru" },
-      keymap_map = { ["English (US)"] = "us" },
-      keymap_regex_map = { { pattern = "Russian", layout = "ru" } },
-      cache_ttl_ms = 1000,
       debounce_ms = 75,
     },
   }
@@ -37,8 +40,13 @@ Example (lazy.nvim):
 
 OPTIONS                                                          *lang-autoswitch-options*
 
-default_layout (string)
-  Layout to enforce in normal mode. Default: "us".
+backend (string|table)
+  Backend name. Supported: "hyprland", "sway". Default: "hyprland".
+  You can also pass backend config inline: { name = "sway", ... } or a backend
+  instance implementing the backend interface.
+
+backend_config (table|nil)
+  Backend-specific configuration (see *lang-autoswitch-backend-config*).
 
 restore_on_insert (boolean)
   Restore previous layout on InsertEnter. Default: true.
@@ -58,23 +66,30 @@ set_on_insertleave (boolean)
 restore_only_if_default (boolean)
   Only restore when current layout is the default. Default: true.
 
-device (string|nil)
-  Keyboard name from `hyprctl devices -j`. When nil, the main keyboard is used.
-
-layouts (table|nil)
-  Explicit layouts list, e.g. { "us", "ru" }. Use when auto-detection fails.
-
-keymap_map (table|nil)
-  Map of `active_keymap` strings to layout codes, e.g. { ["English (US)"] = "us" }.
-
-keymap_regex_map (table|nil)
-  List of { pattern = "English", layout = "us" } using Lua patterns.
 
 cache_ttl_ms (number)
-  Cache `hyprctl devices -j` for this many milliseconds. Default: 1000.
+  Cache backend query output for this many milliseconds. Default: 1000.
 
 debounce_ms (number)
   Debounce layout switching calls. Default: 75.
+
+BACKEND CONFIG                                                   *lang-autoswitch-backend-config*
+
+Hyprland backend_config:
+  default_layout (string)
+    Layout to enforce in normal mode. Default: "us".
+  device (string|nil)
+    Keyboard name from `hyprctl devices -j`.
+  layouts (table|nil)
+    Explicit layouts list, e.g. { "us", "ru" }.
+
+Sway backend_config:
+  default_layout (string)
+    Layout to enforce in normal mode (backend-specific).
+  device (string|nil)
+    Keyboard identifier from `swaymsg -t get_inputs`.
+  layouts (table|nil)
+    Explicit layouts list, e.g. { "us", "ru" }. Must match xkb_layout order.
 
 COMMANDS                                                         *lang-autoswitch-commands*
 
@@ -88,6 +103,8 @@ NOTES                                                             *lang-autoswit
   in tmux.
 - The plugin only restores a layout if it actually switched to the default
   layout earlier; otherwise it does nothing.
+- For Sway, layout names reported by the backend are human-readable, so
+  providing `layouts` helps map indices back to layout codes.
 
 
 CHANGELOG                                                        *lang-autoswitch-changelog*

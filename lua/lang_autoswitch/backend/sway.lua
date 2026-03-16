@@ -37,7 +37,7 @@ function Backend:get_keyboards(fresh, cb)
     end
   end
 
-  run_async({ "hyprctl", "devices", "-j" }, function(out, err)
+  run_async({ "swaymsg", "-t", "get_inputs" }, function(out, err)
     if not out or out == "" then
       cb(nil, err or "Empty backend output")
       return
@@ -47,8 +47,14 @@ function Backend:get_keyboards(fresh, cb)
       cb(nil, "Failed to decode backend output")
       return
     end
-    self.state.cache = { kbs = data.keyboards, at = now_ms() }
-    cb(data.keyboards, nil)
+    local kbs = {}
+    for _, dev in ipairs(data) do
+      if dev.type == "keyboard" then
+        table.insert(kbs, dev)
+      end
+    end
+    self.state.cache = { kbs = kbs, at = now_ms() }
+    cb(kbs, nil)
   end)
 end
 
@@ -57,45 +63,30 @@ function Backend:pick_keyboard(kbs)
     return nil
   end
   local device = self.cfg.device
-  local main_kb
-  for _, kb in ipairs(kbs) do
-    if kb.main then
-      main_kb = kb
-      break
-    end
-  end
   if device then
     for _, kb in ipairs(kbs) do
-      if kb.name == device then
+      if kb.identifier == device or kb.name == device then
         return kb
       end
     end
   end
-  return main_kb or kbs[1]
-end
-
-local function split_layouts(layout_str)
-  if type(layout_str) ~= "string" or layout_str == "" then
-    return nil
-  end
-  local layouts = {}
-  for item in layout_str:gmatch("[^,%s]+") do
-    table.insert(layouts, item)
-  end
-  return layouts[1] and layouts or nil
+  return kbs[1]
 end
 
 function Backend:get_layouts(kb)
   if self.cfg.layouts and #self.cfg.layouts > 0 then
     return self.cfg.layouts
   end
-  return split_layouts(kb.layout)
+  if type(kb.xkb_layout_names) == "table" and #kb.xkb_layout_names > 0 then
+    return kb.xkb_layout_names
+  end
+  return nil
 end
 
 function Backend:get_active(kb)
   return {
-    keymap = kb.active_keymap,
-    index = kb.active_keymap_index,
+    keymap = kb.xkb_active_layout_name,
+    index = tonumber(kb.xkb_active_layout_index),
   }
 end
 
@@ -104,8 +95,12 @@ function Backend:get_default_layout()
 end
 
 function Backend:set_layout(kb, index, cb)
-  local device = self.cfg.device or kb.name
-  run_async({ "hyprctl", "switchxkblayout", device, tostring(index) }, function(_, err)
+  local device = self.cfg.device or kb.identifier or kb.name
+  if not device then
+    cb(false, "No device identifier available")
+    return
+  end
+  run_async({ "swaymsg", "input", device, "xkb_switch_layout", tostring(index) }, function(_, err)
     if err then
       cb(false, err)
       return
@@ -115,8 +110,11 @@ function Backend:set_layout(kb, index, cb)
 end
 
 function Backend:is_available()
-  if vim.fn.executable("hyprctl") ~= 1 then
-    return false, "lang_autoswitch: hyprctl not found in PATH"
+  if vim.fn.executable("swaymsg") ~= 1 then
+    return false, "lang_autoswitch: swaymsg not found in PATH"
+  end
+  if not vim.env.SWAYSOCK or vim.env.SWAYSOCK == "" then
+    return false, "lang_autoswitch: SWAYSOCK not set (is Sway running?)"
   end
   return true, nil
 end
