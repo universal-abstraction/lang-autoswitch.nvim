@@ -1,117 +1,147 @@
-*lang-autoswitch.nvim*   Simple XKB layout autoswitch for Hyprland and Sway
+*lang-autoswitch.txt*   Keyboard layout switching for Hyprland and Sway
 
-INTRODUCTION                                                     *lang-autoswitch*
+==============================================================================
+INTRODUCTION                                               *lang-autoswitch*
 
-lang-autoswitch.nvim is a small Neovim plugin that switches XKB layouts using
-Hyprland's hyprctl or Sway's swaymsg. It sets a default layout on
-FocusGained/InsertLeave and restores the previous layout on
-FocusLost/InsertEnter.
+lang-autoswitch.nvim switches the keyboard layout to your default one in
+Normal mode and back to the layout you were typing in when you enter Insert
+mode or leave Neovim. It uses Hyprland's `hyprctl` or Sway's `swaymsg`.
 
+- On startup, |FocusGained| and |InsertLeave| the default layout is set and
+  the previous layout is remembered.
+- On |InsertEnter|, |FocusLost| and exit the remembered layout is restored,
+  if the plugin switched away from it and the current layout is still the
+  default one.
 
-REQUIREMENTS                                                     *lang-autoswitch-requirements*
+==============================================================================
+REQUIREMENTS                                  *lang-autoswitch-requirements*
 
-- Neovim 0.10+ (uses |vim.system|)
-- Hyprland with `hyprctl` available in PATH, or Sway with `swaymsg` available
-  in PATH
+- Neovim 0.10+ (uses |vim.system()|)
+- Hyprland with `hyprctl` in PATH, or Sway with `swaymsg` in PATH
 
+==============================================================================
+SETUP                                                *lang-autoswitch-setup*
 
-SETUP                                                            *lang-autoswitch-setup*
-
-Example (lazy.nvim):
->
+With lazy.nvim:
+>lua
   {
-    "your-user/lang-autoswitch.nvim",
-    event = { "InsertEnter", "FocusGained" },
+    "universal-abstraction/lang-autoswitch.nvim",
+    main = "lang_autoswitch",
     opts = {
       backend = "hyprland",
       backend_config = {
         default_layout = "us",
-        device = "at-translated-set-2-keyboard",
         layouts = { "us", "ru" },
       },
-      cache_ttl_ms = 1000,
-      restore_on_insert = true,
-      set_on_focus_gained = true,
-      restore_on_focus_lost = true,
-      debounce_ms = 75,
     },
   }
 <
+Without a plugin manager:
+>lua
+  require("lang_autoswitch").setup({
+    backend = { name = "sway", default_layout = "English (US)" },
+  })
+<
+==============================================================================
+OPTIONS                                            *lang-autoswitch-options*
 
-OPTIONS                                                          *lang-autoswitch-options*
+backend (string|table)                          Default: "hyprland"
+  "hyprland" or "sway"; an inline config such as
+  `{ name = "sway", default_layout = "English (US)" }`; a backend module with
+  a `new(cfg)` constructor; or a backend object created by one. An unknown
+  name is reported as an error and the plugin stays inactive.
 
-backend (string|table)
-  Backend name. Supported: "hyprland", "sway". Default: "hyprland".
-  You can also pass backend config inline: { name = "sway", ... } or a backend
-  instance implementing the backend interface.
+backend_config (table|nil)                      Default: nil
+  Backend options, see |lang-autoswitch-backend-config|.
 
-backend_config (table|nil)
-  Backend-specific configuration (see *lang-autoswitch-backend-config*).
+set_on_vimenter (boolean)                       Default: true
+  Set the default layout on |VimEnter|.
 
-restore_on_insert (boolean)
-  Restore previous layout on InsertEnter. Default: true.
+set_on_focus_gained (boolean)                   Default: true
+  Set the default layout on |FocusGained|.
 
-set_on_focus_gained (boolean)
-  Enforce default layout on FocusGained. Default: true.
+set_on_insertleave (boolean)                    Default: true
+  Set the default layout on |InsertLeave|.
 
-restore_on_focus_lost (boolean)
-  Restore previous layout on FocusLost. Default: true.
+restore_on_insert (boolean)                     Default: true
+  Restore the previous layout on |InsertEnter|. If false, the default
+  layout is set instead.
 
-set_on_vimenter (boolean)
-  Enforce default layout on VimEnter. Default: true.
+restore_on_focus_lost (boolean)                 Default: true
+  Restore the previous layout on |FocusLost|.
 
-set_on_insertleave (boolean)
-  Enforce default layout on InsertLeave. Default: true.
+restore_only_if_default (boolean)               Default: true
+  Restore only if the current layout is still the default one, so a layout
+  you chose yourself is not overwritten.
 
-restore_only_if_default (boolean)
-  Only restore when current layout is the default. Default: true.
+log_level (string|number)                       Default: "warn"
+  "trace", "debug", "info", "warn", "error" or a |vim.log.levels| value.
 
-log_level (string|number)
-  Log verbosity: trace, debug, info, warn, error or vim.log.levels.*.
-  Default: "warn".
+cache_ttl_ms (number)                           Default: 1000
+  Passed to the backend as its cache lifetime for keyboard queries.
 
-cache_ttl_ms (number)
-  Cache backend query output for this many milliseconds. Default: 1000.
+debounce_ms (number)                            Default: 75
+  Ignore repeated switches of the same kind within this many milliseconds.
 
-debounce_ms (number)
-  Debounce layout switching calls. Default: 75.
+focus_lock (boolean)                            Default: true
+  Serialise focus transitions between Neovim instances, see
+  |lang-autoswitch-focus-lock|.
 
-BACKEND CONFIG                                                   *lang-autoswitch-backend-config*
+focus_lock_path (string|nil)
+  Lock directory. Default: `stdpath("state") .. "/lang-autoswitch.lock"`.
 
-Hyprland backend_config:
+focus_lock_ttl_ms (number)                      Default: 2500
+  Age after which another instance may take the lock over.
+
+focus_lock_poll_ms (number)                     Default: 50
+  Retry interval while waiting for the lock.
+
+==============================================================================
+BACKEND CONFIG                              *lang-autoswitch-backend-config*
+
+Hyprland:
   default_layout (string)
-    Layout to enforce in normal mode. Default: "us".
+    Layout for Normal mode. Default: "us".
   device (string|nil)
-    Keyboard name from `hyprctl devices -j`.
+    Keyboard name from `hyprctl devices -j`. Default: the main keyboard.
   layouts (table|nil)
-    Explicit layouts list, e.g. { "us", "ru" }.
+    Layout codes in the order configured in Hyprland, e.g. { "us", "ru" }.
+    Default: read from the keyboard.
 
-Sway backend_config:
-  default_layout (string)
-    Layout to enforce in normal mode (backend-specific).
+Sway:
+  default_layout (string, required)
+    Layout name as Sway reports it, e.g. "English (US)".
   device (string|nil)
-    Keyboard identifier from `swaymsg -t get_inputs`.
+    Keyboard identifier from `swaymsg -t get_inputs`. Default: the first
+    keyboard.
   layouts (table|nil)
-    Explicit layouts list, e.g. { "us", "ru" }. Must match xkb_layout order.
+    Layout names in the configured order. Default: read from the keyboard.
 
-COMMANDS                                                         *lang-autoswitch-commands*
+==============================================================================
+FOCUS LOCK                                      *lang-autoswitch-focus-lock*
 
-:LangAutoswitchSelfCheck
-  Run a small environment check (hyprctl availability and layout detection).
+When you switch between two Neovim windows, one gets |FocusLost| and the
+other |FocusGained| at almost the same time. The lock makes the second one
+wait until the first has restored its layout.
 
+An instance holds the lock while it has focus. A lock older than
+`focus_lock_ttl_ms` is taken over by the next instance instead of waiting,
+so a missing |FocusLost| event can't block it; the previous owner then skips
+its restore. Since a lock held for a while is older than the TTL, the
+ordering is best-effort.
 
-NOTES                                                             *lang-autoswitch-notes*
+==============================================================================
+COMMANDS                                          *lang-autoswitch-commands*
 
-- If Focus events do not fire in a terminal, ensure `focus-events` are enabled
-  in tmux.
-- The plugin only restores a layout if it actually switched to the default
-  layout earlier; otherwise it does nothing.
-- For Sway, layout names reported by the backend are human-readable, so
-  providing `layouts` helps map indices back to layout codes.
+:LangAutoswitchSelfCheck                            *:LangAutoswitchSelfCheck*
+  Check that the backend is available and report the detected keyboard and
+  current layout.
 
+==============================================================================
+NOTES                                                *lang-autoswitch-notes*
 
-CHANGELOG                                                        *lang-autoswitch-changelog*
+- Focus events in a terminal need terminal support; inside tmux, also
+  enable `set -g focus-events on`.
+- See CHANGELOG.md in the repository for changes.
 
-See CHANGELOG.md in the repository.
-
-vim:tw=78:ts=8:ft=help:norl:
+ vim:tw=78:ts=8:ft=help:norl:
