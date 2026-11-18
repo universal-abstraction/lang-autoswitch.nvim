@@ -5,79 +5,82 @@ local M = {}
 local defaults = {
   backend = "hyprland",
   backend_config = nil,
-  default_layout = "us", -- deprecated (use backend_config.default_layout)
   restore_on_insert = true,
   set_on_focus_gained = true,
   restore_on_focus_lost = true,
   set_on_vimenter = true,
   set_on_insertleave = true,
   restore_only_if_default = true,
-  device = nil,   -- deprecated (use backend_config.device)
-  layouts = nil,  -- deprecated (use backend_config.layouts)
-  keymap_map = nil, -- deprecated
-  keymap_regex_map = nil, -- deprecated
+  default_layout = nil, -- deprecated (use backend_config.default_layout)
+  device = nil, -- deprecated (use backend_config.device)
+  layouts = nil, -- deprecated (use backend_config.layouts)
   cache_ttl_ms = 1000, -- cache backend query output for this many ms
   log_level = "warn", -- trace|debug|info|warn|error or vim.log.levels.*
   debounce_ms = 75, -- debounce layout switching to reduce duplicate calls
   focus_lock = true, -- serialize focus transitions across instances
-  focus_lock_path = nil, -- optional lock file path
-  focus_lock_ttl_ms = 2500, -- consider lock stale after this many ms
+  focus_lock_path = nil, -- optional lock directory path
+  focus_lock_ttl_ms = 2500, -- take over a lock older than this many ms
   focus_lock_poll_ms = 50, -- retry interval while waiting for lock
 }
 
 local core
 local backend
 
+local backend_modules = {
+  hyprland = "lang_autoswitch.backend.hyprland",
+  sway = "lang_autoswitch.backend.sway",
+}
+
 local function resolve_backend_module(name)
-  if name == "sway" then
-    return require("lang_autoswitch.backend.sway")
+  local module = backend_modules[name]
+  if not module then
+    local names = vim.tbl_keys(backend_modules)
+    table.sort(names)
+    return nil, ("lang_autoswitch: unknown backend %q (available: %s)"):format(
+      tostring(name),
+      table.concat(names, ", ")
+    )
   end
-  return require("lang_autoswitch.backend.hyprland")
+  return require(module)
 end
 
-local function normalize_backend(opts)
-  if type(opts.backend) == "table" and opts.backend.get_keyboards and not opts.backend.new then
-    if opts.backend.cfg or opts.backend.state then
-      return opts.backend, opts
-    end
+-- `opts.backend` can be:
+--   * a backend name: "hyprland" or "sway"
+--   * an inline config: { name = "sway", default_layout = ..., ... }
+--   * a backend module/class with a `new(cfg)` constructor
+--   * a backend instance (returned by `new`), used as is
+-- Returns the backend instance, or nil and an error message.
+local function build_backend(opts)
+  local b = opts.backend
+  if type(b) == "table" and rawget(b, "cfg") ~= nil then
+    return b
   end
 
-  local backend_name = opts.backend
-  local backend_config = opts.backend_config or {}
-
-  if type(opts.backend) == "table" and opts.backend.new and not opts.backend.name then
-    local legacy = {
-      default_layout = opts.default_layout,
-      device = opts.device,
-      layouts = opts.layouts,
-    }
-    backend_config = vim.tbl_deep_extend("force", {}, legacy, backend_config)
-    if backend_config.cache_ttl_ms == nil then
-      backend_config.cache_ttl_ms = opts.cache_ttl_ms
-    end
-    local instance = opts.backend.new and opts.backend.new(backend_config) or opts.backend
-    return instance, opts
-  end
-
-  if type(opts.backend) == "table" then
-    backend_name = opts.backend.name or backend_name
-    backend_config = vim.tbl_deep_extend("force", {}, backend_config, opts.backend)
-    backend_config.name = nil
-  end
-
-  local legacy = {
+  local cfg = vim.tbl_deep_extend("force", {}, {
     default_layout = opts.default_layout,
     device = opts.device,
     layouts = opts.layouts,
-  }
-  backend_config = vim.tbl_deep_extend("force", {}, legacy, backend_config)
-  if backend_config.cache_ttl_ms == nil then
-    backend_config.cache_ttl_ms = opts.cache_ttl_ms
+  }, opts.backend_config or {})
+
+  local module, err
+  if type(b) == "table" and type(b.new) == "function" then
+    module = b
+  elseif type(b) == "table" then
+    module, err = resolve_backend_module(b.name or defaults.backend)
+    local inline = vim.deepcopy(b)
+    inline.name = nil
+    cfg = vim.tbl_deep_extend("force", cfg, inline)
+  else
+    module, err = resolve_backend_module(b or defaults.backend)
+  end
+  if not module then
+    return nil, err
   end
 
-  local backend_module = resolve_backend_module(backend_name)
-  local instance = backend_module.new and backend_module.new(backend_config) or backend_module
-  return instance, opts
+  if cfg.cache_ttl_ms == nil then
+    cfg.cache_ttl_ms = opts.cache_ttl_ms
+  end
+  return module.new(cfg)
 end
 
 local function normalize_log_level(value)
@@ -94,7 +97,10 @@ end
 function M._self_check(user_opts)
   local opts = vim.tbl_deep_extend("force", {}, defaults, user_opts or {})
   opts.log_level = normalize_log_level(opts.log_level)
-  local active_backend = normalize_backend(opts)
+  local active_backend, err = build_backend(opts)
+  if not active_backend then
+    return false, err
+  end
   local instance = Core.new(active_backend, opts)
   return instance:self_check()
 end
@@ -102,7 +108,12 @@ end
 function M.setup(user_opts)
   local opts = vim.tbl_deep_extend("force", {}, defaults, user_opts or {})
   opts.log_level = normalize_log_level(opts.log_level)
-  backend = normalize_backend(opts)
+  local err
+  backend, err = build_backend(opts)
+  if not backend then
+    vim.notify(err, vim.log.levels.ERROR)
+    return
+  end
   if backend.is_available then
     local ok, msg = backend:is_available()
     if not ok then
@@ -189,6 +200,12 @@ function M.setup(user_opts)
     local level = ok and vim.log.levels.INFO or vim.log.levels.WARN
     vim.notify(msg, level)
   end, { desc = "Run lang-autoswitch environment self-check" })
+end
+
+-- Exposed for tests.
+M._build_backend = build_backend
+M._get_core = function()
+  return core
 end
 
 return M

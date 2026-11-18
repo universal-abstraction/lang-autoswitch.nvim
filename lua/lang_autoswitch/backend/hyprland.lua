@@ -1,24 +1,10 @@
-local uv = vim.uv or vim.loop
+local util = require("lang_autoswitch.util")
+
+local now_ms = util.now_ms
+local run_async = util.run_async
 
 local Backend = {}
 Backend.__index = Backend
-
-local function now_ms()
-  if uv and uv.now then
-    return uv.now()
-  end
-  return math.floor(os.time() * 1000)
-end
-
-local function run_async(cmd, cb)
-  vim.system(cmd, { text = true }, function(result)
-    if result.code ~= 0 then
-      cb(nil, result.stderr)
-      return
-    end
-    cb(result.stdout, nil)
-  end)
-end
 
 function Backend.new(cfg)
   local self = setmetatable({}, Backend)
@@ -100,7 +86,7 @@ function Backend:get_active(kb)
 end
 
 function Backend:get_default_layout()
-  return self.cfg.default_layout
+  return self.cfg.default_layout or "us"
 end
 
 function Backend:set_layout(kb, index, cb)
