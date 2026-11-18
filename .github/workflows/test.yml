@@ -19,3 +19,6 @@ jobs:
           version: ${{ matrix.nvim }}
       - name: Run tests
         run: make test
+      - name: Probe (temporary) - is vim.system on_exit a fast context?
+        run: |
+          nvim --headless -u NONE -c 'lua local done=false; vim.system({"true"}, {}, function() print("in_fast_event=" .. tostring(vim.in_fast_event()) .. " api_ok=" .. tostring(pcall(vim.api.nvim_get_mode))); done=true end); vim.wait(2000, function() return done end); io.stdout:write("\n"); vim.cmd("qa!")' 2>&1
