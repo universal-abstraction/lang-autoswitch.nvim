@@ -1,24 +1,10 @@
-local uv = vim.uv or vim.loop
+local util = require("lang_autoswitch.util")
+
+local now_ms = util.now_ms
+local run_async = util.run_async
 
 local Backend = {}
 Backend.__index = Backend
-
-local function now_ms()
-  if uv and uv.now then
-    return uv.now()
-  end
-  return math.floor(os.time() * 1000)
-end
-
-local function run_async(cmd, cb)
-  vim.system(cmd, { text = true }, function(result)
-    if result.code ~= 0 then
-      cb(nil, result.stderr)
-      return
-    end
-    cb(result.stdout, nil)
-  end)
-end
 
 function Backend.new(cfg)
   local self = setmetatable({}, Backend)
@@ -115,6 +101,10 @@ function Backend:is_available()
   end
   if not vim.env.SWAYSOCK or vim.env.SWAYSOCK == "" then
     return false, "lang_autoswitch: SWAYSOCK not set (is Sway running?)"
+  end
+  if not self.cfg.default_layout or self.cfg.default_layout == "" then
+    return false,
+      'lang_autoswitch: sway backend needs backend_config.default_layout (e.g. "English (US)")'
   end
   return true, nil
 end
