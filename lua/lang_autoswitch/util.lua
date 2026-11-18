@@ -14,8 +14,8 @@ end
 -- cb(nil, err) on failure.
 --
 -- vim.system invokes on_exit from a libuv callback ("fast" context), where
--- most of the Nvim API, vim.fn and vim.notify are not allowed. The callback
--- is therefore scheduled onto the main loop.
+-- vim.notify and much of the Nvim API fail with E5560. The callback is
+-- therefore scheduled onto the main loop.
 function M.run_async(cmd, cb)
   local ok, err = pcall(vim.system, cmd, { text = true }, vim.schedule_wrap(function(result)
     if result.code ~= 0 then

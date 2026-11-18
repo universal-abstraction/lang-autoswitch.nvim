@@ -98,13 +98,12 @@ local function settle(core)
 end
 
 test("run_async callback runs on the main loop", function()
-  local done, fast, fn_ok, out, err = false, nil, nil, nil, nil
+  local done, fast, out, err = false, nil, nil, nil
   util.run_async({ "sh", "-c", "echo hi" }, function(o, e)
     out, err = o, e
+    -- In a fast (libuv) callback vim.notify fails with E5560, and core
+    -- calls vim.notify from these callbacks.
     fast = vim.in_fast_event()
-    -- vim.fn is not allowed in a fast (libuv) callback; core calls
-    -- vim.fn.stdpath from here when it releases the focus lock
-    fn_ok = pcall(vim.fn.stdpath, "state")
     done = true
   end)
   vim.wait(2000, function()
@@ -112,7 +111,6 @@ test("run_async callback runs on the main loop", function()
   end, 10)
   eq(done, true, "callback called")
   eq(fast, false, "not in a fast event")
-  eq(fn_ok, true, "vim.fn usable in callback")
   eq(out, "hi\n", "stdout")
   eq(err, nil, "no error")
 end)
