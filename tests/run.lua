@@ -98,18 +98,21 @@ local function settle(core)
 end
 
 test("run_async callback runs on the main loop", function()
-  local done, api_ok, out, err = false, nil, nil, nil
+  local done, fast, fn_ok, out, err = false, nil, nil, nil, nil
   util.run_async({ "sh", "-c", "echo hi" }, function(o, e)
     out, err = o, e
-    -- nvim_get_mode is not allowed in a fast (libuv) callback
-    api_ok = pcall(vim.api.nvim_get_mode)
+    fast = vim.in_fast_event()
+    -- vim.fn is not allowed in a fast (libuv) callback; core calls
+    -- vim.fn.stdpath from here when it releases the focus lock
+    fn_ok = pcall(vim.fn.stdpath, "state")
     done = true
   end)
   vim.wait(2000, function()
     return done
   end, 10)
   eq(done, true, "callback called")
-  eq(api_ok, true, "API usable in callback")
+  eq(fast, false, "not in a fast event")
+  eq(fn_ok, true, "vim.fn usable in callback")
   eq(out, "hi\n", "stdout")
   eq(err, nil, "no error")
 end)
