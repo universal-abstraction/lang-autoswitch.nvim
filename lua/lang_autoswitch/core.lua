@@ -1,17 +1,35 @@
 local uv = vim.uv or vim.loop
+local util = require("lang_autoswitch.util")
 
 local Core = {}
 Core.__index = Core
 
-local function now_ms()
-  if uv and uv.now then
-    return uv.now()
-  end
-  return math.floor(os.time() * 1000)
-end
+local now_ms = util.now_ms
+local instance_count = 0
 
 local function epoch_ms()
   return math.floor(os.time() * 1000)
+end
+
+local function read_file(path)
+  local fd = uv.fs_open(path, "r", 420)
+  if not fd then
+    return nil
+  end
+  local stat = uv.fs_fstat(fd)
+  local data = stat and uv.fs_read(fd, stat.size, 0) or nil
+  uv.fs_close(fd)
+  return data
+end
+
+local function write_file(path, data)
+  local fd = uv.fs_open(path, "w", 384)
+  if not fd then
+    return false
+  end
+  uv.fs_write(fd, data, 0)
+  uv.fs_close(fd)
+  return true
 end
 
 local function find_layout_index(layouts, active_keymap, active_idx)
@@ -33,6 +51,9 @@ function Core.new(backend, opts)
   local self = setmetatable({}, Core)
   self.backend = backend
   self.opts = opts
+  instance_count = instance_count + 1
+  -- Identifies this instance as the owner of the focus lock.
+  self.lock_token = ("%d:%d"):format(uv.os_getpid(), instance_count)
   self.state = {
     prev_layout = nil,
     last_action_at = {},
@@ -131,7 +152,10 @@ function Core:_set_layout_with_kb_async(intent_id, kb, layouts, target, cb)
     end
   end
   if idx == nil then
-    cb(false, "Target layout not in layout list")
+    cb(false, ("layout %q is not in the layout list (%s)"):format(
+      tostring(target),
+      table.concat(layouts, ", ")
+    ))
     return
   end
   self.backend:set_layout(kb, idx, function(ok, err)
@@ -185,10 +209,29 @@ function Core:_enqueue(kind)
 end
 
 function Core:_lock_path()
-  if self.opts.focus_lock_path and self.opts.focus_lock_path ~= "" then
-    return self.opts.focus_lock_path
+  if not self.lock_path then
+    if self.opts.focus_lock_path and self.opts.focus_lock_path ~= "" then
+      self.lock_path = self.opts.focus_lock_path
+    else
+      self.lock_path = vim.fn.stdpath("state") .. "/lang-autoswitch.lock"
+    end
   end
-  return vim.fn.stdpath("state") .. "/lang-autoswitch.lock"
+  return self.lock_path
+end
+
+function Core:_lock_owner_file()
+  return self:_lock_path() .. "/owner"
+end
+
+-- True if the lock directory still carries this instance's token. Another
+-- instance may have taken the lock over after focus_lock_ttl_ms.
+function Core:_lock_is_ours()
+  return read_file(self:_lock_owner_file()) == self.lock_token
+end
+
+function Core:_remove_lock_dir()
+  pcall(uv.fs_unlink, self:_lock_owner_file())
+  pcall(uv.fs_rmdir, self:_lock_path())
 end
 
 function Core:_lock_ttl_ms()
@@ -225,10 +268,12 @@ function Core:_try_acquire_lock()
     if not self:_lock_is_stale(path) then
       return false
     end
-    pcall(uv.fs_rmdir, path)
+    self:_log(vim.log.levels.DEBUG, "taking over stale focus lock")
+    self:_remove_lock_dir()
   end
   local ok = uv and uv.fs_mkdir and uv.fs_mkdir(path, 448) or false
   if ok then
+    write_file(self:_lock_owner_file(), self.lock_token)
     self.state.lock_owned = true
     return true
   end
@@ -242,8 +287,10 @@ function Core:_release_lock()
   if not self.state.lock_owned then
     return
   end
-  local path = self:_lock_path()
-  pcall(uv.fs_rmdir, path)
+  -- Never remove a lock that another instance has taken over.
+  if self:_lock_is_ours() then
+    self:_remove_lock_dir()
+  end
   self.state.lock_owned = false
   self.state.lock_blocked = false
 end
@@ -311,6 +358,14 @@ function Core:focus_leave(kind)
     return
   end
   self.state.pending_intent = nil
+  if not self:_lock_is_ours() then
+    -- Another instance took the lock over and now manages the layout;
+    -- restoring here would undo its switch.
+    self:_log(vim.log.levels.DEBUG, "focus lock was taken over; skipping restore")
+    self.state.lock_owned = false
+    self.state.lock_blocked = false
+    return
+  end
   if kind == "restore_prev" then
     self.state.release_after_finish = true
     if not self:restore_prev() then
